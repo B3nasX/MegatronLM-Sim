@@ -54,4 +54,14 @@
 |----------------------|--------|------------------------------------------|
 | event_id             | string |                                          |
 | rank                 | int    | GPU rank (0–127)                         |
-|
+| compute_type         | enum   | attention, mlp, optimizer, embedding     |
+| start_time_ms        | float  | Start timestamp                          |
+| end_time_ms          | float  | End timestamp                            |
+| duration_ms          | float  | Compute duration (ms)                    |
+| layer_id             | int    | Layer index                              |
+| flop_count           | int    | Total FLOPs performed                    |
+| tflops               | float  | FLOPs expressed in TFLOPs                |
+| memory_accessed_bytes| int    | Bytes read/written from memory           |
+| pipeline_stage       | int    | Pipeline stage (0–7)                     |
+| dp_group             | int    | Data-parallel group (0–3)                |
+| tp_rank              | int    | Tensor-parallel rank within group (0–3)  |
