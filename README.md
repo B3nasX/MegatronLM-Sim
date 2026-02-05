@@ -1,4 +1,4 @@
-###A simulator for the Nvidia Megatron LM training process
+### A simulator for the Nvidia Megatron LM training process
 
 ## 1. Model Architecture
 
