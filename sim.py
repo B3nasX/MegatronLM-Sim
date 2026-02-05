@@ -149,7 +149,6 @@ class AstraSimMegatronSimulator:
 
         elif collective == CollectiveType.ALL_REDUCE:
             # Rough model: 2×reduce-scatter + all-gather like behavior
-            # scales worse with more ranks
             base_latency_ms = 0.8
             alpha = 1.1 if num_ranks <= 8 else 1.4 + (num_ranks / 128) * 0.6
             transfer_cost = (size_gb * 8 * 2) / (bandwidth_gbps / 1000)  # 2x traffic
@@ -210,7 +209,7 @@ class AstraSimMegatronSimulator:
     def simulate_tensor_parallel_layer(self, rank: int, layer_id: int, is_forward: bool):
         start = self.current_time
         
-        # Realistic-ish durations (H200-class GPU, Llama-7B-like layer)
+        # Realistic durations (H200 GPU)
         if is_forward:
             attn_time = random.uniform(0.75, 1.05)      # ~0.9 s
             mlp_time  = random.uniform(2.1, 2.9)        # ~2.5 s
@@ -290,7 +289,7 @@ class AstraSimMegatronSimulator:
         # Total optimizer sync usually 2–12 seconds on this scale
         single_ar_duration = random.uniform(0.035, 0.085)
         
-        for l in range(759):  # keep your tuned number
+        for l in range(759):
             group_idx = 0
             for pp in range(self.para_cfg.pp_size):
                 for tp in range(self.para_cfg.tp_size):
@@ -300,7 +299,7 @@ class AstraSimMegatronSimulator:
                                if self.rank_to_stage[r]['pp_stage'] == pp
                                and self.rank_to_stage[r]['tp_rank'] == tp]
                     
-                    size = 1316100 * 4  # pretend 4× bigger gradients
+                    size = 1316100 * 4
                     
                     self.current_time += single_ar_duration * random.uniform(0.92, 1.08)
                     
