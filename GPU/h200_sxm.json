@@ -1,0 +1,14 @@
+{
+    "name": "NVIDIA H200 SXM",
+    "description": "H100 successor with 141GB HBM3e. Same compute as H100 but 76% more memory and 43% more bandwidth. Ideal for large context LLMs.",
+    "peak_tflops": 989.0,
+    "memory_gb": 141,
+    "memory_bw_gbps": 4800.0,
+    "compute_efficiency": 0.47,
+    "dtype_factor": 1.0,
+    "nvlink_bw": 900.0,
+    "num_sms": 132,
+    "l2_cache_mb": 50.0,
+    "tdp_watts": 700,
+    "thermal_throttle_factor": 0.95
+}

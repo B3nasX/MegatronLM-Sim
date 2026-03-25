@@ -1,0 +1,14 @@
+{
+    "name": "NVIDIA A100 PCIe 80GB",
+    "description": "PCIe variant of A100. No NVLink, lower bandwidth. Used in budget training and inference setups.",
+    "peak_tflops": 312.0,
+    "memory_gb": 80,
+    "memory_bw_gbps": 2039.0,
+    "compute_efficiency": 0.38,
+    "dtype_factor": 1.0,
+    "nvlink_bw": 0.0,
+    "num_sms": 108,
+    "l2_cache_mb": 40.0,
+    "tdp_watts": 300,
+    "thermal_throttle_factor": 0.94
+}

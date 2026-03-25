@@ -1,0 +1,14 @@
+{
+    "name": "NVIDIA H100 SXM",
+    "description": "Flagship datacenter GPU for LLM training. 80GB HBM3, NVLink 4.0. Used in DGX H100 systems.",
+    "peak_tflops": 989.0,
+    "memory_gb": 80,
+    "memory_bw_gbps": 3350.0,
+    "compute_efficiency": 0.45,
+    "dtype_factor": 1.0,
+    "nvlink_bw": 900.0,
+    "num_sms": 132,
+    "l2_cache_mb": 50.0,
+    "tdp_watts": 700,
+    "thermal_throttle_factor": 0.95
+}

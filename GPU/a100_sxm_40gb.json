@@ -1,0 +1,14 @@
+{
+    "name": "NVIDIA A100 SXM 40GB",
+    "description": "Original A100 with 40GB HBM2e. Common in cloud instances (AWS p4d, Azure ND A100). Lower memory limits batch size.",
+    "peak_tflops": 312.0,
+    "memory_gb": 40,
+    "memory_bw_gbps": 1555.0,
+    "compute_efficiency": 0.40,
+    "dtype_factor": 1.0,
+    "nvlink_bw": 600.0,
+    "num_sms": 108,
+    "l2_cache_mb": 40.0,
+    "tdp_watts": 400,
+    "thermal_throttle_factor": 0.95
+}

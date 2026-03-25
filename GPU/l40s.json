@@ -1,0 +1,14 @@
+{
+    "name": "NVIDIA L40S",
+    "description": "Ada Lovelace datacenter GPU. 48GB GDDR6, no NVLink or HBM. Budget-friendly for fine-tuning and smaller-scale training.",
+    "peak_tflops": 366.0,
+    "memory_gb": 48,
+    "memory_bw_gbps": 864.0,
+    "compute_efficiency": 0.35,
+    "dtype_factor": 1.0,
+    "nvlink_bw": 0.0,
+    "num_sms": 142,
+    "l2_cache_mb": 96.0,
+    "tdp_watts": 350,
+    "thermal_throttle_factor": 0.92
+}

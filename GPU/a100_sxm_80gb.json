@@ -1,0 +1,14 @@
+{
+    "name": "NVIDIA A100 SXM 80GB",
+    "description": "Previous-gen flagship. 80GB HBM2e, NVLink 3.0. Workhorse of most LLM training clusters (2020-2024). Used in DGX A100.",
+    "peak_tflops": 312.0,
+    "memory_gb": 80,
+    "memory_bw_gbps": 2039.0,
+    "compute_efficiency": 0.42,
+    "dtype_factor": 1.0,
+    "nvlink_bw": 600.0,
+    "num_sms": 108,
+    "l2_cache_mb": 40.0,
+    "tdp_watts": 400,
+    "thermal_throttle_factor": 0.95
+}

@@ -1,0 +1,14 @@
+{
+    "name": "AMD Instinct MI300X",
+    "description": "AMD's flagship AI GPU. 192GB HBM3, Infinity Fabric. Competitor to H100 for LLM training. Used in El Capitan supercomputer.",
+    "peak_tflops": 1307.0,
+    "memory_gb": 192,
+    "memory_bw_gbps": 5300.0,
+    "compute_efficiency": 0.38,
+    "dtype_factor": 1.0,
+    "nvlink_bw": 896.0,
+    "num_sms": 304,
+    "l2_cache_mb": 256.0,
+    "tdp_watts": 750,
+    "thermal_throttle_factor": 0.92
+}

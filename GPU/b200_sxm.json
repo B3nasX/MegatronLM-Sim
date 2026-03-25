@@ -1,0 +1,14 @@
+{
+    "name": "NVIDIA B200 SXM",
+    "description": "Blackwell architecture GPU. 192GB HBM3e, 2nd gen Transformer Engine with FP4. Used in DGX B200 and GB200 NVL72 systems.",
+    "peak_tflops": 2250.0,
+    "memory_gb": 192,
+    "memory_bw_gbps": 8000.0,
+    "compute_efficiency": 0.50,
+    "dtype_factor": 1.0,
+    "nvlink_bw": 1800.0,
+    "num_sms": 192,
+    "l2_cache_mb": 96.0,
+    "tdp_watts": 1000,
+    "thermal_throttle_factor": 0.93
+}

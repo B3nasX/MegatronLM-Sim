@@ -1,0 +1,14 @@
+{
+    "name": "NVIDIA V100 SXM2 32GB",
+    "description": "Volta architecture (2017). 32GB HBM2, NVLink 2.0. Used for early GPT-2/GPT-3 research. Still found in older clusters.",
+    "peak_tflops": 125.0,
+    "memory_gb": 32,
+    "memory_bw_gbps": 900.0,
+    "compute_efficiency": 0.35,
+    "dtype_factor": 1.0,
+    "nvlink_bw": 300.0,
+    "num_sms": 80,
+    "l2_cache_mb": 6.0,
+    "tdp_watts": 300,
+    "thermal_throttle_factor": 0.93
+}

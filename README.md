@@ -1,67 +1,83 @@
-# A simulator for the Nvidia Megatron LM training process
+# MegatronLM-Sim — Training-phase simulator
 
-## 1. Model Architecture
+An interactive simulator for Megatron-style TP/PP/DP training. It produces time-series traces for compute and communication, including embedding/output heads, activation checkpointing recompute, gradient clipping, and optimizer overhead.
 
-| Parameter          | Value       |
-|--------------------|-------------|
-| Parameters         | 8.8 Billion |
-| Hidden Size        | 4096        |
-| Layers             | 32          |
-| Attention Heads    | 32          |
-| Sequence Length    | 2048        |
-| FFN Intermediate   | 16384       |
-| Vocabulary Size    | 50257       |
+## Model defaults
 
-## 2. Parallelism Configuration
+| Parameter        | Value       |
+|------------------|-------------|
+| Parameters       | 8.8 Billion |
+| Hidden Size      | 4096        |
+| Layers           | 32          |
+| Attention Heads  | 32          |
+| Sequence Length  | 2048        |
+| FFN Intermediate | 16384       |
+| Vocabulary Size  | 50257       |
 
-| Dimension          | Degree | Notes                          |
-|--------------------|--------|--------------------------------|
-| Tensor Parallel    | 4      | Intra-node, usually NVLink     |
-| Pipeline Parallel  | 8      | Inter-node, usually InfiniBand |
-| Data Parallel      | 4      | Gradient all-reduce            |
-| **Total GPUs**     | **128**| 4 × 8 × 4                      |
-| Global Batch Size  | 128    | 1 sample per GPU               |
+## Parallelism (typical preset)
 
-## 3. Simulation Trace Files
+| Dimension         | Degree | Notes                                |
+|-------------------|--------|--------------------------------------|
+| Tensor Parallel   | 4      | Intra-node, usually NVLink           |
+| Pipeline Parallel | 8      | Inter-node, usually InfiniBand       |
+| Data Parallel     | 4      | Gradient all-reduce across DP groups |
+| **Total GPUs**    | **128**| 4 × 8 × 4                            |
+| Global Batch Size | 128    | 1 sample per GPU in the default preset|
 
-### File 1: messages_timeseries.csv
-- Rows: 359,424
-- Columns: 14
+## What’s modeled
+- Embedding compute on stage 0 (vocab-parallel shards across TP ranks).
+- Output head / LM projection on the final PP stage (also TP-sharded).
+- Activation checkpointing: backward can recompute forward work (controlled by `activation_checkpoint_ratio`).
+- Gradient clipping: global grad-norm compute plus an 8-byte all-reduce per DP group.
+- Optimizer step: Adam-like update cost on each rank’s parameter shard.
+- Communication realism: NVLink / intra-rack IB / cross-rack with oversubscription, per-hop latency, chunk/header overhead, congestion, ring vs tree all-reduce selection, compute/comm overlap factor.
 
-| Column               | Type   | Description                                           |
-|----------------------|--------|-------------------------------------------------------|
-| msg_id               | string |                                                       |
-| src_rank             | int    | Source GPU (0–127)                                    |
-| dst_rank             | int    | Destination GPU (0–127)                               |
-| size_bytes           | int    | Message size in bytes                                 |
-| size_mb              | float  | Size in MB                                            |
-| collective_type      | enum   | all_reduce, p2p, all_gather, reduce_scatter           |
-| start_time_ms        | float  | Start timestamp                                       |
-| end_time_ms          | float  | End timestamp                                         |
-| duration_ms          | float  | Transfer duration (ms)                                |
-| stage                | string | e.g. attn_fwd, mlp_fwd, pp_forward_mbX, optimizer...  |
-| layer_id             | int    | Transformer layer ID (-1 = non-layer)                 |
-| pipeline_stage_src   | int    | Source pipeline stage (0–7)                           |
-| pipeline_stage_dst   | int    | Destination pipeline stage (0–7)                      |
-| dp_group_src         | int    | Source data-parallel group (0–3)                      |
-| dp_group_dst         | int    | Destination data-parallel group (0–3)                 |
+## How to run
+1. From the repo root, launch: `python sim.py`
+2. Pick a preset or enter custom TP/PP/DP, micro-batch, microbatches, and schedule (1F1B or GPipe).
+3. Choose a network topology JSON from `Network/` and a GPU config from `GPU/` (or use defaults if none).
+4. Enter iteration count; traces are written under `Traces/` with timestamped filenames.
 
-### File 2: compute_timeseries.csv
-- Rows: 65,792
-- Columns: 12
+## Trace files
 
-| Column               | Type   | Description                              |
-|----------------------|--------|------------------------------------------|
-| event_id             | string |                                          |
-| rank                 | int    | GPU rank (0–127)                         |
-| compute_type         | enum   | attention, mlp, optimizer, embedding     |
-| start_time_ms        | float  | Start timestamp                          |
-| end_time_ms          | float  | End timestamp                            |
-| duration_ms          | float  | Compute duration (ms)                    |
-| layer_id             | int    | Layer index                              |
-| flop_count           | int    | Total FLOPs performed                    |
-| tflops               | float  | FLOPs expressed in TFLOPs                |
-| memory_accessed_bytes| int    | Bytes read/written from memory           |
-| pipeline_stage       | int    | Pipeline stage (0–7)                     |
-| dp_group             | int    | Data-parallel group (0–3)                |
-| tp_rank              | int    | Tensor-parallel rank within group (0–3)  |
+**Messages** (`messages_timeseries*.csv`)
+
+| Column               | Description                                                            |
+|----------------------|------------------------------------------------------------------------|
+| msg_id               | Unique message id                                                      |
+| src_rank / dst_rank  | Source / destination GPU rank (-1 for collective dst)                  |
+| size_bytes / size_mb | Message size                                                           |
+| collective_type      | `all_reduce`, `p2p`, `all_gather`, `reduce_scatter`, etc.              |
+| start_time_ms        | Start timestamp                                                        |
+| end_time_ms          | End timestamp                                                          |
+| duration_ms          | Transfer duration                                                      |
+| stage                | Logical stage (e.g., `tp_all_reduce`, `pp_forward`, `dp_grad_clip`)    |
+| layer_id             | Transformer layer id, `-1` for non-layer ops                           |
+| pipeline_stage_src/dst| Pipeline stage ids for src/dst                                        |
+| dp_group_src/dst     | Data-parallel group ids for src/dst                                    |
+| participating_ranks  | Comma-separated ranks in the collective                                |
+
+**Compute** (`compute_timeseries*.csv`)
+
+| Column                 | Description                                         |
+|------------------------|-----------------------------------------------------|
+| event_id               | Unique compute event id                             |
+| rank                   | GPU rank                                            |
+| compute_type           | `forward`, `backward`, `embedding`, `output`, `grad_clip`, `optimizer` |
+| start_time_ms / end_time_ms | Start / end timestamps                         |
+| duration_ms            | Compute duration                                    |
+| layer_id               | Layer index, `-1` for non-layer ops                 |
+| flop_count / tflops    | FLOPs and TFLOPs                                    |
+| memory_accessed_bytes  | Bytes read/written                                   |
+| pipeline_stage         | Pipeline stage id                                   |
+| dp_group               | Data-parallel group id                              |
+| tp_rank                | Tensor-parallel rank                                |
+
+## Naming and locations
+- Traces: `Traces/[i{iters}]messages_timeseries<timestamp>[<gpus>gpu].csv` and matching compute file.
+- Configs: network JSONs in `Network/`, GPU JSONs in `GPU/`.
+
+## Key knobs to mention
+- `activation_checkpoint_ratio` in `ModelConfig` (0 disables recompute).
+- `overlap_factor` in network config (compute/comm overlap for collectives).
+- TP/PP/DP sizes and microbatch count strongly affect pipeline timing and DP all-reduce volume.
