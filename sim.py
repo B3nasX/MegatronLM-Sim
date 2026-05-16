@@ -10,23 +10,13 @@ import json
 import datetime
 import math
 
-#TODO: Optimizer step X, Activation checkpointing X, Output layers? X, Gradient clipping? X
-
-# --- Constants and Enums ---
+from comms import CommunicationModel, CollectiveType, Message, NetworkConfig
 
 class ParallelType(Enum):
     TENSOR_PARALLEL = "TP"
     PIPELINE_PARALLEL = "PP"
     DATA_PARALLEL = "DP"
     SEQUENCE_PARALLEL = "SP"
-
-class CollectiveType(Enum):
-    ALL_REDUCE = "all_reduce"
-    ALL_GATHER = "all_gather"
-    REDUCE_SCATTER = "reduce_scatter"
-    ALL_TO_ALL = "all_to_all"
-    BROADCAST = "broadcast"
-    POINT_TO_POINT = "p2p"
 
 class ComputeType(Enum):
     FORWARD = "forward"
@@ -42,22 +32,6 @@ class ComputeType(Enum):
 # --- Data Classes ---
 
 @dataclass
-class Message:
-    msg_id: str
-    src_rank: int
-    dst_rank: int
-    size_bytes: int
-    collective_type: CollectiveType
-    start_time: float
-    end_time: float = 0.0
-    stage: str = ""
-    layer_id: int = -1
-    participating_ranks: str = ""  # comma-separated list of all ranks involved
-    
-    def duration(self) -> float:
-        return self.end_time - self.start_time
-
-@dataclass
 class ComputeEvent:
     event_id: str
     rank: int
@@ -67,60 +41,6 @@ class ComputeEvent:
     layer_id: int
     flop_count: int = 0
     memory_accessed: int = 0
-
-@dataclass
-class NetworkConfig:
-    # Bandwidths in GB/s
-    nvlink_bw: float = 600.0
-    infiniband_bw: float = 50.0
-    
-    latency_nvlink_us: float = 0.5
-    latency_ib_us: float = 2.0
-    
-    num_gpus_per_node: int = 8
-    topology: str = "fat_tree"
-    overlap_factor: float = 0.8
-    collective_algo: str = 'auto'
-    
-    # Fat tree topology parameters
-    nodes_per_rack: int = 4                  # Physical nodes per rack
-    oversubscription_ratio: float = 2.0      # Spine oversubscription (1.0 = full bisection)
-    latency_cross_rack_us: float = 5.0       # Cross-rack latency (legacy, used as fallback)
-    
-    # --- NIC and PCIe limits ---
-    nic_bw_gbps: float = 50.0               # Per-GPU NIC bandwidth (400 Gb/s NDR = 50 GB/s)
-    num_nics_per_gpu: int = 1                # NICs per GPU (rail-optimized = 1 dedicated NIC)
-    pcie_bw_gbps: float = 64.0              # PCIe Gen5 x16 bandwidth 
-    
-    # --- Protocol overhead ---
-    header_bytes: int = 128                  # Per-message protocol/header overhead
-    chunk_size_bytes: int = 8_388_608        # NCCL chunk/pipeline size (8 MB default)
-    
-    # --- Bidirectional links ---
-    bidirectional: bool = True               # Whether links are full-duplex
-    
-    # --- Per-hop switch latency ---
-    switch_latency_us: float = 0.3           # Latency added per switch hop
-    num_hops_intra_rack: int = 1             # Hops within a rack (ToR only)
-    num_hops_cross_rack: int = 3             # Hops across racks (ToR -> Spine -> ToR)
-    
-    # --- Algorithm tuning ---
-    ring_tree_threshold_bytes: int = 1_048_576  # Auto algo: ring above this, tree below
-    
-    # --- Jitter ---
-    latency_jitter_us: float = 0.5           # Random +/- jitter per message (microseconds)
-    
-    # --- Congestion ---
-    congestion_penalty_factor: float = 0.1   # BW degradation per additional concurrent flow (0.1 = 10% loss per flow)
-
-    @classmethod
-    def from_json(cls, path: str) -> 'NetworkConfig':
-        """Load a NetworkConfig from a JSON file. Unknown keys (like 'name', 'description') are ignored."""
-        with open(path, 'r') as f:
-            data = json.load(f)
-        valid_fields = {field.name for field in cls.__dataclass_fields__.values()}
-        filtered = {k: v for k, v in data.items() if k in valid_fields}
-        return cls(**filtered)
 
 @dataclass
 class GPUConfig:
@@ -209,6 +129,8 @@ class MegatronSimulator:
         self.rank_to_stage = {}
         self.setup_topology()
         
+        self.comm_model = CommunicationModel(self.net_cfg, self.rank_to_stage)
+        
     def setup_topology(self):
         world_size = self.para_cfg.world_size()
         for rank in range(world_size):
@@ -286,113 +208,7 @@ class MegatronSimulator:
             )
             self.rank_times[r] = max(self.rank_times[r], end_time)
         return end_time
-    """
-    Computes communication time with full accuracy model:
-      1. 3-tier bandwidth: NVLink / intra-rack IB / cross-rack IB (with oversubscription)
-      2. Per-hop switch latency instead of flat cross-rack latency
-      3. NIC bandwidth bottleneck (per-GPU NIC can't exceed nic_bw)
-      4. PCIe bottleneck (GPU <-> NIC limited by PCIe Gen5)
-      5. Protocol overhead: header bytes per chunk + chunked pipelining
-      6. Bidirectional link awareness
-      7. Congestion penalty from concurrent flows sharing links
-      8. Latency jitter for realistic variance
-      9. Configurable ring/tree algorithm threshold
-    """
-    def calculate_communication_time(self, size_bytes: int, collective: CollectiveType, 
-                                     participating_ranks: List[int]) -> float:
-        num_ranks = len(participating_ranks)
-        if num_ranks <= 1:
-            return 0.0
 
-        net = self.net_cfg
-
-        # --- 1. Determine tier: same-node / same-rack / cross-rack ---
-        nodes = set(self.rank_to_stage[r]['node_id'] for r in participating_ranks)
-        racks = set(self.rank_to_stage[r]['rack_id'] for r in participating_ranks)
-        same_node = len(nodes) == 1
-        same_rack = len(racks) == 1
-
-        if same_node:
-            link_bw = net.nvlink_bw                                     # GB/s
-            base_lat = net.latency_nvlink_us / 1_000_000.0              # seconds
-            num_hops = 0                                                # NVSwitch, no switch hops
-        elif same_rack:
-            link_bw = net.infiniband_bw                                 # GB/s
-            base_lat = net.latency_ib_us / 1_000_000.0
-            num_hops = net.num_hops_intra_rack
-        else:
-            link_bw = net.infiniband_bw / net.oversubscription_ratio    # GB/s (reduced at spine)
-            base_lat = net.latency_ib_us / 1_000_000.0                 # base wire latency
-            num_hops = net.num_hops_cross_rack
-
-        # --- 2. Per-hop switch latency ---
-        hop_lat = num_hops * (net.switch_latency_us / 1_000_000.0)     # seconds
-        total_lat = base_lat + hop_lat
-
-        # --- 3. Latency jitter ---
-        jitter = random.uniform(-net.latency_jitter_us, net.latency_jitter_us) / 1_000_000.0
-        total_lat = max(0.0, total_lat + jitter)
-
-        # --- 4. Bandwidth: min of link BW, NIC BW, PCIe BW ---
-        # NIC: each GPU has num_nics_per_gpu NICs of nic_bw_gbps each
-        nic_bw = net.nic_bw_gbps * net.num_nics_per_gpu                # GB/s per GPU
-        pcie_bw = net.pcie_bw_gbps                                     # GB/s
-        effective_bw = min(link_bw, nic_bw, pcie_bw)                   # GB/s
-
-        # --- 5. Bidirectional: for collectives that use both directions simultaneously ---
-        # All-reduce uses bidirectional (reduce-scatter + all-gather); P2P uses one direction
-        if net.bidirectional and collective != CollectiveType.POINT_TO_POINT:
-            effective_bw = effective_bw  # already full-duplex, no change
-        elif not net.bidirectional and collective != CollectiveType.POINT_TO_POINT:
-            # Half-duplex: bidirectional collectives share the link
-            effective_bw = effective_bw * 0.5
-
-        # --- 6. Congestion penalty from concurrent flows ---
-        if self._active_flows > 1 and not same_node:
-            # Each additional concurrent flow degrades shared link bandwidth
-            # Formula: bw_effective = bw / (1 + penalty * (num_flows - 1))
-            congestion_divisor = 1.0 + net.congestion_penalty_factor * (self._active_flows - 1)
-            effective_bw = effective_bw / congestion_divisor
-
-        # Prevent zero/negative bandwidth
-        effective_bw = max(effective_bw, 0.001)
-
-        # --- 7. Protocol overhead: header per chunk + chunked pipelining ---
-        # Total data includes header overhead per chunk
-        num_chunks = max(1, math.ceil(size_bytes / net.chunk_size_bytes))
-        total_bytes_with_overhead = size_bytes + (num_chunks * net.header_bytes)
-        size_gb = total_bytes_with_overhead / (1024 ** 3)
-
-        # --- 8. Compute transfer time based on collective type ---
-        if collective == CollectiveType.POINT_TO_POINT:
-            # Simple: latency + data / bandwidth
-            transfer_time = size_gb / effective_bw
-            return total_lat + transfer_time
-
-        elif collective == CollectiveType.ALL_REDUCE:
-            algo = net.collective_algo
-            if algo == 'auto':
-                algo = 'ring' if size_bytes > net.ring_tree_threshold_bytes else 'tree'
-
-            if algo == 'ring':
-                # Ring all-reduce: 2(n-1) latency steps, 2(n-1)/n bandwidth cost
-                lat_cost = 2.0 * (num_ranks - 1) * total_lat
-                bw_cost = 2.0 * (num_ranks - 1) / num_ranks * size_gb / effective_bw
-            else:  # tree
-                log_n = math.log2(max(num_ranks, 2))
-                lat_cost = 2.0 * log_n * total_lat
-                bw_cost = 2.0 * log_n * size_gb / effective_bw
-
-            # Chunked pipelining: with many chunks, latency and BW overlap
-            # Approximation: full latency for first chunk, then BW-dominated
-            if num_chunks > 1:
-                # Pipeline effect: total ≈ latency_startup + bw_cost (chunks overlap latency)
-                return lat_cost + bw_cost
-            else:
-                return lat_cost + bw_cost
-
-        # Fallback heuristic for other collectives
-        return total_lat * num_ranks + size_gb / effective_bw
     """
     Simulates compute for a TP layer, including all-reduce.
     Compute time is derived from the GPU config:
@@ -460,7 +276,7 @@ class MegatronSimulator:
         ar_size = 2 * H * H * bytes_per_param + B * S * H * bytes_per_param
         # Track congestion: this TP group starts an all-reduce flow
         self._active_flows += 1
-        ar_duration = self.calculate_communication_time(ar_size, CollectiveType.ALL_REDUCE, ranks)
+        ar_duration = self.comm_model.calculate_communication_time(ar_size, CollectiveType.ALL_REDUCE, ranks, self._active_flows)
         self._active_flows -= 1
         ar_end = start_time + ar_duration
 
@@ -599,7 +415,7 @@ class MegatronSimulator:
         if is_forward and stage < self.para_cfg.pp_size - 1:
             next_stage_ranks = self._stage_ranks[stage + 1]
             self._active_flows += 1
-            p2p_duration = self.calculate_communication_time(p2p_size, CollectiveType.POINT_TO_POINT, [all_ranks_at_stage[0], next_stage_ranks[0]])
+            p2p_duration = self.comm_model.calculate_communication_time(p2p_size, CollectiveType.POINT_TO_POINT, [all_ranks_at_stage[0], next_stage_ranks[0]], self._active_flows)
             self._active_flows -= 1
             # Emit ONE P2P message per DP group (one rank sends activations to next stage)
             for dp_id, tp_ranks in dp_groups_map.items():
@@ -619,7 +435,7 @@ class MegatronSimulator:
         elif not is_forward and stage > 0:
             prev_stage_ranks = self._stage_ranks[stage - 1]
             self._active_flows += 1
-            p2p_duration = self.calculate_communication_time(p2p_size, CollectiveType.POINT_TO_POINT, [all_ranks_at_stage[0], prev_stage_ranks[0]])
+            p2p_duration = self.comm_model.calculate_communication_time(p2p_size, CollectiveType.POINT_TO_POINT, [all_ranks_at_stage[0], prev_stage_ranks[0]], self._active_flows)
             self._active_flows -= 1
             # Emit ONE P2P message per DP group (one rank sends gradients to prev stage)
             for dp_id, tp_ranks in dp_groups_map.items():
@@ -641,6 +457,7 @@ class MegatronSimulator:
         self.task_completion_times[(mb, 'fwd' if is_forward else 'bwd', stage)] = p2p_end
         for r in all_ranks_at_stage:
             self.rank_times[r] = max(self.rank_times[r], p2p_end)
+
     """
     Runs the GPipe schedule: all forward microbatches through all stages, then all backward microbatches in reverse stage order.
     """
@@ -651,6 +468,7 @@ class MegatronSimulator:
         for mb in range(self.para_cfg.num_microbatches):
             for stage in range(self.para_cfg.pp_size - 1, -1, -1):
                 self.simulate_stage(mb, stage, False)
+
     """
     Runs the 1F1B schedule: interleaves forward and backward microbatches across stages to maximize overlap.
     For each stage, it first schedules the warmup forward microbatches that only depend on previous stages.
@@ -718,8 +536,8 @@ class MegatronSimulator:
             self._active_flows += num_dp_groups
             for (pp_stage, tp_rank), dp_ranks in self._dp_allreduce_groups.items():
                 dp_start = max(self.rank_times[r] for r in dp_ranks)
-                dp_ar_duration = self.calculate_communication_time(
-                    dp_ar_size, CollectiveType.ALL_REDUCE, dp_ranks)
+                dp_ar_duration = self.comm_model.calculate_communication_time(
+                    dp_ar_size, CollectiveType.ALL_REDUCE, dp_ranks, self._active_flows)
 
                 dp_ar_end = dp_start + dp_ar_duration
 
@@ -765,7 +583,7 @@ class MegatronSimulator:
             # All-reduce of scalar grad norm across DP ranks (8 bytes)
             grad_norm_size = 8
             self._active_flows += 1
-            grad_norm_ar = self.calculate_communication_time(grad_norm_size, CollectiveType.ALL_REDUCE, dp_ranks)
+            grad_norm_ar = self.comm_model.calculate_communication_time(grad_norm_size, CollectiveType.ALL_REDUCE, dp_ranks, self._active_flows)
             self._active_flows -= 1
             grad_norm_ar_end = grad_norm_end + grad_norm_ar
             self.messages.append(

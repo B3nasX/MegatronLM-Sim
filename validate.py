@@ -50,6 +50,7 @@ def run_validation(pp_size: int, num_microbatches: int):
 
     sim = MegatronSimulator(p_cfg, m_cfg, net_cfg, gpu_cfg)
     sim.run_full_iteration(0)
+
     total_flops = sum(e.flop_count for e in sim.compute_events)
     total_time = sim.current_time
     num_gpus = tp_size * pp_size * dp_size
